@@ -4,7 +4,9 @@ import {AbortError} from '@shopify/cli-kit/node/error'
 import type {StoredStoreAppSession} from '@shopify/cli-kit/node/store-auth-session'
 
 interface GraphQLClientErrorLike {
-  response: {status?: number; errors?: unknown}
+  // `extensions` is part of the GraphQL response that `graphql-request` attaches to its
+  // `ClientError`, and it carries the Admin API query cost and throttle status.
+  response: {status?: number; errors?: unknown; extensions?: unknown}
 }
 
 export function isGraphQLClientErrorLike(error: unknown): error is GraphQLClientErrorLike {

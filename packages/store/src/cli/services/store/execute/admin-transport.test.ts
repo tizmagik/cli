@@ -2,15 +2,17 @@ import {prepareStoreExecuteRequest} from './request.js'
 import {
   ABORTED_FETCH_MESSAGE_FRAGMENTS,
   fetchPublicApiVersions,
+  GraphQLOperationError,
   runAdminStoreGraphQLOperation,
 } from './admin-transport.js'
 import {STORE_AUTH_APP_CLIENT_ID} from '../auth/config.js'
 import {clearStoredStoreAppSession} from '@shopify/cli-kit/node/store-auth-session'
-import {beforeEach, describe, expect, test, vi} from 'vitest'
+import {afterEach, beforeEach, describe, expect, test, vi} from 'vitest'
 import {adminUrl} from '@shopify/cli-kit/node/api/admin'
-import {graphqlRequest} from '@shopify/cli-kit/node/api/graphql'
+import {graphqlRequest, type GraphQLResponse} from '@shopify/cli-kit/node/api/graphql'
 import {AbortError, BugError} from '@shopify/cli-kit/node/error'
 import {renderSingleTask} from '@shopify/cli-kit/node/ui'
+import {mockAndCaptureOutput} from '@shopify/cli-kit/node/testing/output'
 
 vi.mock('@shopify/cli-kit/node/store-auth-session')
 vi.mock('@shopify/cli-kit/node/api/graphql')
@@ -31,6 +33,10 @@ function makeClientErrorLike(status: number, message = 'GraphQL Error'): Error {
   const error = new Error(message) as Error & {response: {status: number; errors: {message: string}[]}}
   error.response = {status, errors: [{message}]}
   return error
+}
+
+function asGraphQLResponse(response: {extensions?: unknown}): GraphQLResponse<unknown> {
+  return response as unknown as GraphQLResponse<unknown>
 }
 
 describe('runAdminStoreGraphQLOperation', () => {
@@ -55,6 +61,10 @@ describe('runAdminStoreGraphQLOperation', () => {
     vi.mocked(renderSingleTask).mockImplementation(async ({task}) => task(() => {}))
   })
 
+  afterEach(() => {
+    mockAndCaptureOutput().clear()
+  })
+
   test('executes the GraphQL request successfully', async () => {
     vi.mocked(graphqlRequest).mockResolvedValue({data: {shop: {name: 'Test shop'}}})
     const request = await prepareStoreExecuteRequest({query: 'query { shop { name } }'})
@@ -69,8 +79,38 @@ describe('runAdminStoreGraphQLOperation', () => {
       url: `https://${store}/admin/api/2025-10/graphql.json`,
       token: 'token',
       variables: undefined,
-      responseOptions: {handleErrors: false},
+      responseOptions: {handleErrors: false, onResponse: expect.any(Function)},
     })
+  })
+
+  test('keeps the response extensions on the success path without changing the result', async () => {
+    const extensions = {cost: {actualQueryCost: 12, throttleStatus: {currentlyAvailable: 988, restoreRate: 50}}}
+    vi.mocked(graphqlRequest).mockImplementation(async (options) => {
+      options.responseOptions?.onResponse?.(asGraphQLResponse({extensions}))
+      return {shop: {name: 'Test shop'}}
+    })
+    const output = mockAndCaptureOutput()
+    const request = await prepareStoreExecuteRequest({query: 'query { shop { name } }'})
+
+    const result = await runAdminStoreGraphQLOperation({context, request})
+
+    // The result a caller sees, and therefore what `--json` prints on success, is untouched.
+    expect(result).toEqual({shop: {name: 'Test shop'}})
+    expect(output.debug()).toContain('"actualQueryCost":12')
+    expect(output.debug()).toContain('"restoreRate":50')
+  })
+
+  test('does not log anything when the response carries no extensions', async () => {
+    vi.mocked(graphqlRequest).mockImplementation(async (options) => {
+      options.responseOptions?.onResponse?.(asGraphQLResponse({}))
+      return {shop: {name: 'Test shop'}}
+    })
+    const output = mockAndCaptureOutput()
+    const request = await prepareStoreExecuteRequest({query: 'query { shop { name } }'})
+
+    await runAdminStoreGraphQLOperation({context, request})
+
+    expect(output.debug()).not.toContain('extensions')
   })
 
   test('clears stored auth and throws a re-auth error on 401 using the real session scopes', async () => {
@@ -143,6 +183,35 @@ describe('runAdminStoreGraphQLOperation', () => {
     await expect(runAdminStoreGraphQLOperation({context, request})).rejects.toThrow('GraphQL operation failed.')
   })
 
+  test('keeps the GraphQL errors and extensions as data on the thrown error', async () => {
+    const errors = [{message: 'Field does not exist'}]
+    const extensions = {cost: {actualQueryCost: 0, throttleStatus: {currentlyAvailable: 1000, restoreRate: 50}}}
+    vi.mocked(graphqlRequest).mockRejectedValue({response: {errors, extensions}})
+    const request = await prepareStoreExecuteRequest({query: 'query { nope }'})
+
+    let captured: GraphQLOperationError | undefined
+    await runAdminStoreGraphQLOperation({context, request}).catch((error) => {
+      captured = error as GraphQLOperationError
+    })
+
+    expect(captured).toBeInstanceOf(GraphQLOperationError)
+    expect(captured?.response).toEqual({errors, extensions})
+  })
+
+  test('leaves `extensions` off the thrown error when the response has none', async () => {
+    const errors = [{message: 'Field does not exist'}]
+    vi.mocked(graphqlRequest).mockRejectedValue({response: {errors}})
+    const request = await prepareStoreExecuteRequest({query: 'query { nope }'})
+
+    let captured: GraphQLOperationError | undefined
+    await runAdminStoreGraphQLOperation({context, request}).catch((error) => {
+      captured = error as GraphQLOperationError
+    })
+
+    // `JSON.stringify` drops the undefined key, so a caller sees `{"errors": [...]}` alone.
+    expect(JSON.parse(JSON.stringify(captured?.response))).toEqual({errors})
+  })
+
   test('maps a 402 ClientError to a store-unavailable AbortError even when the response also carries `errors`', async () => {
     // Branch-ordering regression check: a 402 response that also carries GraphQL `errors`
     // must surface as the store-unavailable AbortError, not the generic "GraphQL operation
@@ -156,6 +225,7 @@ describe('runAdminStoreGraphQLOperation', () => {
     })
 
     expect(captured).toBeInstanceOf(AbortError)
+    expect(captured).not.toBeInstanceOf(GraphQLOperationError)
     expect(captured?.message).toBe(`The store ${store} is currently unavailable.`)
     expect(captured?.message).not.toContain('GraphQL operation failed.')
   })
@@ -203,6 +273,29 @@ describe('runAdminStoreGraphQLOperation', () => {
     expect(captured).toBeInstanceOf(AbortError)
     expect(captured).not.toBeInstanceOf(BugError)
     expect(clearStoredStoreAppSession).not.toHaveBeenCalled()
+  })
+})
+
+describe('GraphQLOperationError', () => {
+  const errors = [{message: 'Field does not exist on type QueryRoot'}]
+
+  test('renders exactly like the plain AbortError it replaces', () => {
+    const structured = new GraphQLOperationError({errors, extensions: {cost: {actualQueryCost: 0}}})
+    // These are the fields the error banner reads, so matching all of them means the
+    // rendered output is unchanged for anyone not passing --json.
+    const previous = new AbortError('GraphQL operation failed.', JSON.stringify({errors}, null, 2))
+
+    expect(structured.message).toBe(previous.message)
+    expect(structured.tryMessage).toBe(previous.tryMessage)
+    expect(structured.nextSteps).toEqual(previous.nextSteps)
+    expect(structured.customSections).toEqual(previous.customSections)
+    expect(structured.formattedMessage).toEqual(previous.formattedMessage)
+    expect(structured.type).toBe(previous.type)
+  })
+
+  test('is an AbortError, so the global handler still treats it as a user-facing failure', () => {
+    expect(new GraphQLOperationError({errors})).toBeInstanceOf(AbortError)
+    expect(new GraphQLOperationError({errors})).not.toBeInstanceOf(BugError)
   })
 })
 

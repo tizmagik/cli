@@ -93,6 +93,22 @@ describe('writeOrOutputStoreExecuteResult', () => {
     expect(streams.stderr()).toBe('')
   })
 
+  test('writes a GraphQL errors payload verbatim in json mode with no success banner', async () => {
+    const output = mockAndCaptureOutput()
+
+    await writeOrOutputStoreExecuteResult(
+      {errors: [{message: 'Field does not exist'}], extensions: {cost: {actualQueryCost: 0}}},
+      undefined,
+      'json',
+    )
+
+    expect(renderSuccess).not.toHaveBeenCalled()
+    expect(JSON.parse(output.output())).toEqual({
+      errors: [{message: 'Field does not exist'}],
+      extensions: {cost: {actualQueryCost: 0}},
+    })
+  })
+
   test('suppresses success rendering when writing a file in json mode', async () => {
     await inTemporaryDirectory(async (tmpDir) => {
       // Given

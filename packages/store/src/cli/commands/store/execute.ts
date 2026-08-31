@@ -1,5 +1,6 @@
 import {executeStoreOperation} from '../../services/store/execute/index.js'
 import {writeOrOutputStoreExecuteResult} from '../../services/store/execute/result.js'
+import {GraphQLOperationError} from '../../services/store/execute/admin-transport.js'
 import StoreCommand from '../../utilities/store-command.js'
 import {storeFlags} from '../../flags.js'
 import {globalFlags, jsonFlag} from '@shopify/cli-kit/node/cli'
@@ -72,16 +73,29 @@ Mutations are disabled by default. Re-run with \`--allow-mutations\` if you inte
   public async run(): Promise<void> {
     const {flags} = await this.parse(StoreExecute)
 
-    const result = await executeStoreOperation({
-      store: flags.store,
-      query: flags.query,
-      queryFile: flags['query-file'],
-      variables: flags.variables,
-      variableFile: flags['variable-file'],
-      version: flags.version,
-      allowMutations: flags['allow-mutations'],
-    })
+    try {
+      const result = await executeStoreOperation({
+        store: flags.store,
+        query: flags.query,
+        queryFile: flags['query-file'],
+        variables: flags.variables,
+        variableFile: flags['variable-file'],
+        version: flags.version,
+        allowMutations: flags['allow-mutations'],
+      })
 
-    await writeOrOutputStoreExecuteResult(result, flags['output-file'], flags.json ? 'json' : 'text')
+      await writeOrOutputStoreExecuteResult(result, flags['output-file'], flags.json ? 'json' : 'text')
+    } catch (error) {
+      // GraphQL `errors` are a response from the server, not a CLI failure, and `--json`
+      // asked for the response as data. Every other failure (invalid auth, an unavailable
+      // store, an aborted fetch) keeps its existing classification and its banner.
+      if (flags.json && error instanceof GraphQLOperationError) {
+        await writeOrOutputStoreExecuteResult(error.response, flags['output-file'], 'json')
+        process.exitCode = 1
+        return
+      }
+
+      throw error
+    }
   }
 }

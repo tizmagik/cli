@@ -1,5 +1,14 @@
 # @shopify/store
 
+## 4.8.0
+
+### Patch Changes
+
+- c60d9c3: Allow store auth recovery after a preview store is claimed.
+- 97943ff: Correct development store command help text.
+  - @shopify/organizations@4.8.0
+  - @shopify/cli-kit@4.8.0
+
 ## 4.7.0
 
 ### Patch Changes

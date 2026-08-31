@@ -14,6 +14,7 @@ interface FatalErrorLike {
   message?: unknown
   formattedMessage?: unknown
   tryMessage?: unknown
+  details?: unknown
   nextSteps?: unknown
   customSections?: unknown
   stack?: unknown
@@ -96,6 +97,20 @@ function jsonTable(data: unknown): string[][] | undefined {
     .map((row) => row.map((cell) => jsonTokenItem(cell) ?? ''))
 }
 
+function jsonDetails(details: unknown): unknown {
+  if (details === undefined) return undefined
+
+  try {
+    const serialized = JSON.stringify(details)
+    return serialized === undefined ? undefined : JSON.parse(serialized)
+    // Circular references, BigInt, and anything else stdout cannot carry are dropped
+    // rather than failing the command: the error itself is what the user came for.
+    // eslint-disable-next-line no-catch-all/no-catch-all
+  } catch {
+    return undefined
+  }
+}
+
 function jsonCustomSection(section: unknown): JsonErrorCustomSection | undefined {
   if (typeof section !== 'object' || section === null || !('body' in section)) return
 
@@ -127,12 +142,14 @@ function jsonErrorDocument(error: FatalErrorLike): JsonErrorDocument | undefined
   const formattedMessage = jsonTokenItem(error.formattedMessage)
   const message = formattedMessage ?? (typeof error.message === 'string' ? unstyled(error.message) : 'Unknown error')
   const tryMessage = jsonTokenItem(error.tryMessage)
+  const details = jsonDetails(error.details)
   const nextSteps = jsonTokenItems(error.nextSteps)
   const customSections = jsonCustomSections(error.customSections)
 
   const commonFields = {
     message,
     ...(tryMessage === undefined ? {} : {tryMessage}),
+    ...(details === undefined ? {} : {details}),
     ...(nextSteps === undefined ? {} : {nextSteps}),
     ...(customSections === undefined ? {} : {customSections}),
   }

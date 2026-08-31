@@ -143,6 +143,23 @@ describe('runAdminStoreGraphQLOperation', () => {
     await expect(runAdminStoreGraphQLOperation({context, request})).rejects.toThrow('GraphQL operation failed.')
   })
 
+  test('carries the GraphQL errors as structured details and keeps the banner envelope', async () => {
+    const errors = [{message: 'Field does not exist', extensions: {code: 'undefinedField'}}]
+    vi.mocked(graphqlRequest).mockRejectedValue({response: {errors}})
+    const request = await prepareStoreExecuteRequest({query: 'query { nope }'})
+
+    let captured: AbortError | undefined
+    await runAdminStoreGraphQLOperation({context, request}).catch((error) => {
+      captured = error as AbortError
+    })
+
+    // `details` is the machine-readable copy: a --json consumer reads the array and its
+    // codes without parsing anything. `tryMessage` is unchanged, so the rendered banner is
+    // byte-identical to before.
+    expect(captured?.details).toStrictEqual({errors})
+    expect(JSON.parse(String(captured?.tryMessage))).toStrictEqual({errors})
+  })
+
   test('maps a 402 ClientError to a store-unavailable AbortError even when the response also carries `errors`', async () => {
     // Branch-ordering regression check: a 402 response that also carries GraphQL `errors`
     // must surface as the store-unavailable AbortError, not the generic "GraphQL operation

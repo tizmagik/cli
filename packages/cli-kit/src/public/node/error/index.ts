@@ -28,6 +28,13 @@ export abstract class FatalError extends Error {
   customSections?: AlertCustomSection[]
   skipOclifErrorHandling: boolean
   /**
+   * Machine-readable detail about the failure, set by the site that raises the error.
+   * It appears only in JSON output, never in the rendered banner, so a consumer reads the
+   * raising site's own data instead of parsing a message written for a human. It must be
+   * JSON-serializable; anything that is not is dropped rather than failing the command.
+   */
+  details?: unknown
+  /**
    * Creates a new FatalError error.
    *
    * @param message - The error message.

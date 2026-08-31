@@ -8,6 +8,7 @@ export interface JsonErrorCustomSection {
 interface JsonErrorBase {
   message: string
   tryMessage?: string
+  details?: unknown
   nextSteps?: string[]
   customSections?: JsonErrorCustomSection[]
 }

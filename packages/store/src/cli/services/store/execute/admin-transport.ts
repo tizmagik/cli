@@ -91,7 +91,15 @@ export async function runAdminStoreGraphQLOperation(input: {
     if (classified) throw classified
 
     if (isGraphQLClientErrorLike(error) && error.response.errors) {
-      throw new AbortError('GraphQL operation failed.', JSON.stringify({errors: error.response.errors}, null, 2))
+      const failure = new AbortError(
+        'GraphQL operation failed.',
+        JSON.stringify({errors: error.response.errors}, null, 2),
+      )
+      // The banner keeps the serialized envelope, so human output is unchanged. `details`
+      // carries the same errors as data, so a `--json` consumer reads the array and its
+      // `extensions.code` directly instead of parsing `tryMessage`.
+      failure.details = {errors: error.response.errors}
+      throw failure
     }
 
     throw error

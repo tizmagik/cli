@@ -151,6 +151,49 @@ describe('renderFatalErrorAsJson', () => {
     })
   })
 
+  test('includes structured details as data rather than a string', () => {
+    const error = Object.assign(new AbortError('GraphQL operation failed.'), {
+      details: {errors: [{message: 'Field does not exist', extensions: {code: 'undefinedField'}}]},
+    })
+
+    expect(renderedDocument(error)).toStrictEqual({
+      error: {
+        type: 'abort',
+        message: 'GraphQL operation failed.',
+        details: {errors: [{message: 'Field does not exist', extensions: {code: 'undefinedField'}}]},
+      },
+    })
+  })
+
+  test('keeps details alongside a try message written for a human', () => {
+    const error = Object.assign(new AbortError('Expected failure', 'Try again'), {
+      details: {code: 'THROTTLED'},
+    })
+
+    expect(renderedDocument(error)).toStrictEqual({
+      error: {type: 'abort', message: 'Expected failure', tryMessage: 'Try again', details: {code: 'THROTTLED'}},
+    })
+  })
+
+  test.each([
+    [
+      'a circular reference',
+      (): unknown => {
+        const circular: Record<string, unknown> = {}
+        circular.self = circular
+        return circular
+      },
+    ],
+    ['a function', (): unknown => () => 'not serializable'],
+    ['undefined', (): unknown => undefined],
+  ])('drops details holding %s without breaking the base error document', (_case, build) => {
+    const error = Object.assign(new AbortError('Expected failure'), {details: build()})
+
+    expect(renderedDocument(error)).toStrictEqual({
+      error: {type: 'abort', message: 'Expected failure'},
+    })
+  })
+
   test('does not render intentionally silent errors', () => {
     const output = mockAndCaptureOutput()
     output.clear()

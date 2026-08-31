@@ -20,6 +20,7 @@ export const JsonErrorCustomSectionSchema = zod
 const commonJsonErrorShape = {
   message: zod.string(),
   tryMessage: zod.string().optional(),
+  details: zod.unknown().optional(),
   nextSteps: zod.array(zod.string()).optional(),
   customSections: zod.array(JsonErrorCustomSectionSchema).optional(),
 }
